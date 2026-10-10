@@ -7,6 +7,13 @@
 	"name": "pixiv-proxy",
 	"main": "src/index.js",
 	"compatibility_date": "2026-03-10",
+	"workers_dev": true,
+	"routes": [
+		{
+			"pattern": "pixiv.erii.cc.cd",
+			"custom_domain": true
+		}
+	],
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 0.1
