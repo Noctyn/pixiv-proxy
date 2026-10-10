@@ -77,6 +77,56 @@ describe("Pixiv proxy", () => {
 		expect(await response.text()).toBe("Unsupported file type");
 	});
 
+	it("handles CORS preflight for API routes with full methods", async () => {
+		const response = await unitFetch("/v1/illust/detail?illust_id=123", {
+			method: "OPTIONS",
+		});
+
+		expect(response.status).toBe(204);
+		expect(response.headers.get("access-control-allow-methods")).toContain(
+			"POST",
+		);
+		expect(response.headers.get("access-control-allow-methods")).toContain(
+			"DELETE",
+		);
+	});
+
+	it("rejects unsupported methods for API routes", async () => {
+		const response = await unitFetch("/v1/illust/detail?illust_id=123", {
+			method: "TRACE",
+		});
+
+		expect(response.status).toBe(405);
+	});
+
+	it("allows ugoira zip archives", async () => {
+		const response = await unitFetch(
+			"/img-zip-ugoira/img/2026/01/01/00/00/00/123456_ugoira600x600.zip",
+			{ method: "OPTIONS" },
+		);
+
+		expect(response.status).toBe(204);
+	});
+
+	it("allows full domain mode for ugoira zip archives", async () => {
+		const response = await unitFetch(
+			"/i.pximg.net/img-zip-ugoira/img/2026/01/01/00/00/00/123456_ugoira600x600.zip",
+			{ method: "OPTIONS" },
+		);
+
+		expect(response.status).toBe(204);
+	});
+
+	it("allows OAuth preflight and methods", async () => {
+		const response = await unitFetch("/auth/token", {
+			method: "OPTIONS",
+		});
+
+		expect(response.status).toBe(204);
+		expect(response.headers.get("access-control-allow-methods")).toContain(
+			"POST",
+		);
+	});
 	it("serves the root response through the deployed Worker", async () => {
 		const response = await SELF.fetch("https://example.com/");
 

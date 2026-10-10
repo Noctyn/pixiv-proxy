@@ -1,147 +1,126 @@
-# Pixiv Proxy
+# Pixiv Proxy (全功能 Pixiv API 与图片反向代理网关)
 
-基于 Cloudflare Workers 的 Pixiv 图片反向代理。它会将请求转发到指定的 Pixiv 图片域名，并通过 CORS 和 CDN 缓存让浏览器可以直接加载图片。
+基于 Cloudflare Workers 构建的高性能 Pixiv 全功能反向代理网关。
+
+不仅支持 Pixiv 图片 CDN（包括动图 Ugoira ZIP），更原生支持 Pixiv 官方 App API 与 OAuth 登录鉴权，可无缝对接 [PixEz Flutter](https://github.com/Notsfsssf/pixez-flutter)、Shaft、Pixiv-Viewer 等第三方客户端或 Web 前端。
 
 > 仅用于个人学习和合法用途。请遵守 Pixiv 的服务条款、版权要求以及相关法律法规。
 
-## 功能
+---
 
-- 支持完整域名模式和简写模式。
-- 只允许访问预设的 Pixiv 域名和图片扩展名。
-- 支持 `GET`、`HEAD` 和 CORS `OPTIONS` 请求。
-- 上游响应保持流式传输，不会将整张图片读入 Worker 内存。
-- 2xx 图片响应默认缓存 30 天，错误响应不缓存。
-- 上游重定向最多跟随 3 次，且目标必须仍在白名单域名内。
-- 对路径穿越、编码分隔符和非图片响应进行校验。
+## ✨ 核心功能与优化改进
 
-## URL 用法
+- **全生态 Pixiv 节点支持**:
+  - **图片 CDN**: `i.pximg.net`、`s.pximg.net`、`imp.pixiv.net`、`source.pixiv.net`。
+  - **App API**: `app-api.pixiv.net` (插画检索、排行榜、漫画、小说、动态、评论等)。
+  - **OAuth 鉴权**: `oauth.secure.pixiv.net`、`accounts.pixiv.net` (支持登录认证与 Token 刷新)。
+- **动图 Ugoira 原生兼容**:
+  支持 Pixiv 动画压缩包格式（`.zip`），允许直接下载播放 Ugoira 序列帧动图。
+- **断点续传与 Range 分片支持**:
+  透传 `Range` 请求头，支持 206 Partial Content 分片加速与大图断点续传。
+- **全 HTTP 方法支持**:
+  针对 API 节点全面支持 `GET`、`POST`、`PUT`、`DELETE`、`PATCH` 与 `OPTIONS`，支持收藏、点赞、关注等完整交互；图片节点仍保持安全的 `GET`/`HEAD` 限制。
+- **差异化智能缓存策略**:
+  - 图片静态资源默认在 Cloudflare 边缘及浏览器端长效缓存 30 天（`immutable`），大幅节约带宽与提升加载速度。
+  - 携带身份认证与动态数据的 API 请求默认不进行公开 CDN 缓存（`no-store`），确保用户隐私与数据实时性。
+- **请求头清洗与防盗链伪造**:
+  图片请求自动注入 `Referer: https://www.pixiv.net/` 规避 403 防盗链；API 请求完整保留客户端 App 特征头（`Authorization`、`App-OS`、`X-Client-Time`、`X-Client-Hash` 等）。
+- **全跨域 (CORS) 开启**:
+  完整支持 `Access-Control-Allow-Origin: *`，方便浏览器端 Web 应用直接调用。
 
-将下面的 `<WORKER_HOST>` 替换为你的 Worker 主机名，例如 `pixiv-proxy.example.workers.dev`。
+---
 
-### 完整域名模式
+## 📌 URL 路由与用法
 
-URL 的第一段是 Pixiv 图片域名：
+将下面的 `<WORKER_HOST>` 替换为你的 Worker 域名或绑定域名，例如 `https://pixiv-proxy.example.workers.dev`。
 
+### 1. 完整域名模式 (推荐用于 PixEz 等客户端)
+
+在 URL 路径第一段显式指定 Pixiv 目标域名：
+
+#### 图片请求:
 ```text
 https://<WORKER_HOST>/i.pximg.net/img-original/img/2026/01/01/00/00/00/12345678_p0.jpg
+https://<WORKER_HOST>/i.pximg.net/img-zip-ugoira/img/2026/01/01/00/00/00/12345678_ugoira600x600.zip
+https://<WORKER_HOST>/s.pximg.net/common/images/no_profile.png
 ```
 
-支持的完整模式域名：
+#### API 请求:
+```text
+https://<WORKER_HOST>/app-api.pixiv.net/v1/illust/detail?illust_id=12345678
+https://<WORKER_HOST>/app-api.pixiv.net/v2/illust/ranking?mode=day
+```
 
-- `i.pximg.net`
-- `s.pximg.net`
-- `imp.pixiv.net`
-- `source.pixiv.net`
+#### OAuth 鉴权请求:
+```text
+https://<WORKER_HOST>/oauth.secure.pixiv.net/auth/token
+```
 
-### 简写模式
+---
 
-简写模式默认转发到 `i.pximg.net`：
+### 2. 简写模式 (直接访问常用资源)
 
+#### 图片简写 (默认转发至 `i.pximg.net`):
 ```text
 https://<WORKER_HOST>/img-original/img/2026/01/01/00/00/00/12345678_p0.jpg
+https://<WORKER_HOST>/img-master/img/2026/01/01/00/00/00/12345678_p0_master1200.jpg
+https://<WORKER_HOST>/img-zip-ugoira/img/2026/01/01/00/00/00/12345678_ugoira600x600.zip
 ```
+支持前缀：`img-original`、`img-master`、`c`、`custom-thumb`、`novel-img`、`img-zip-ugoira`、`user-profile`、`novel-cover`。
 
-允许的路径前缀：
-
-- `img-original`
-- `img-master`
-- `c`
-- `custom-thumb`
-- `novel-img`
-
-允许的图片扩展名：`.jpg`、`.jpeg`、`.png`、`.gif`、`.webp`、`.avif`、`.bmp`。
-
-查询参数会原样转发到上游。如果同一图片 URL 携带大量无关参数，可能降低缓存命中率。
-
-## 本地开发
-
-需要 Node.js 和 pnpm。
-
-```bash
-pnpm install
-pnpm dev
-```
-
-启动后访问：
-
+#### API 简写 (默认转发至 `app-api.pixiv.net`):
 ```text
-http://localhost:8787/
+https://<WORKER_HOST>/v1/illust/detail?illust_id=12345678
+https://<WORKER_HOST>/v2/illust/ranking?mode=day
+https://<WORKER_HOST>/v1/search/illust?word=初音未来
 ```
 
-也可以直接测试代理地址：
-
-```bash
-curl -I "http://localhost:8787/img-original/img/2026/01/01/example.jpg"
-```
-
-## 测试
-
-```bash
-pnpm test -- --run
-```
-
-测试覆盖根路径、CORS 预检、方法限制、域名限制、短路径限制、编码路径校验和扩展名校验。
-
-如果本地出现类似下面的错误：
-
+#### 登录认证简写 (默认转发至 `oauth.secure.pixiv.net`):
 ```text
-The latest compatibility date supported by the installed Cloudflare Workers Runtime is "2026-03-10"
+https://<WORKER_HOST>/auth/token
 ```
 
-说明本地 Vitest/Miniflare 运行时版本落后于 `wrangler.jsonc` 中的兼容日期。请更新 `@cloudflare/vitest-pool-workers`、Wrangler 及锁文件后再运行测试；不要为了绕过本地测试而直接降低生产兼容日期。
+---
 
-## 部署
+## 📱 PixEz Flutter 客户端集成配置
 
-首次使用 Wrangler 时先登录 Cloudflare：
+在 [PixEz Flutter](https://github.com/Notsfsssf/pixez-flutter) 中：
+
+1. 进入 **设置** > **网络设置**。
+2. 将 **图片代理 / 镜像域名** 设为：
+   ```text
+   <WORKER_HOST>/i.pximg.net
+   ```
+   或直接开启自定义反代地址。
+3. （可选）如果客户端支持自定义 API 域名，可将 `app-api.pixiv.net` 的代理主机指向：
+   ```text
+   <WORKER_HOST>/app-api.pixiv.net
+   ```
+
+---
+
+## 💻 本地开发与测试
 
 ```bash
-pnpm exec wrangler login
+# 安装依赖
+npm install
+
+# 运行自动化单元测试
+npm test -- --run
+
+# 启动本地开发服务 (默认端口 8787)
+npm run dev
 ```
 
-部署 Worker：
+---
+
+## 🚀 部署到 Cloudflare Workers
+
+确保已使用 Wrangler 登录 Cloudflare（`npx wrangler login`）：
 
 ```bash
-pnpm deploy
+# 部署至生产环境
+npx wrangler deploy
 ```
 
-部署配置位于 [`wrangler.jsonc`](./wrangler.jsonc)，入口文件是 [`src/index.js`](./src/index.js)。
-
-## 配置说明
-
-当前 Worker 不需要 KV、R2、D1 或其他绑定。主要配置如下：
-
-- `compatibility_date`：Worker 使用的 Cloudflare Runtime 兼容日期。
-- `observability.enabled`：启用 Workers Logs。
-- `observability.head_sampling_rate`：日志采样率，当前为 `0.1`。
-- 图片缓存时间：源码中的 `CACHE_TTL`，当前为 30 天。
-
-如果修改了白名单域名、路径前缀、扩展名或缓存时间，请同步更新测试和本文档。
-
-## 安全注意事项
-
-这是一个公开图片代理，默认没有用户认证、访问令牌或速率限制。部署到公网前建议至少配置以下一项：
-
-- Cloudflare WAF 或 Rate Limiting。
-- Cloudflare Access。
-- 自己的访问令牌校验。
-- 仅绑定到个人使用的域名或私有网络入口。
-
-不要在 URL 查询参数中放置密钥、Cookie 或其他敏感信息。Worker 只会向白名单 Pixiv 域名发起请求，但公网代理仍可能被滥用来消耗流量和请求额度。
-
-## 项目结构
-
-```text
-.
-├── src/index.js          # Worker 入口和代理逻辑
-├── test/index.spec.js    # Vitest / Workers 测试
-├── wrangler.jsonc        # Wrangler 配置
-├── vitest.config.js      # Workers 测试配置
-└── package.json          # 开发、测试和部署命令
-```
-
-## 相关文档
-
-- [Cloudflare Workers 入门](https://developers.cloudflare.com/workers/get-started/guide/)
-- [Fetch Handler](https://developers.cloudflare.com/workers/runtime-apis/handlers/fetch/)
-- [Workers 最佳实践](https://developers.cloudflare.com/workers/best-practices/workers-best-practices/)
-- [Wrangler 命令](https://developers.cloudflare.com/workers/wrangler/commands/)
+部署配置位于 [`wrangler.jsonc`](./wrangler.jsonc)，入口逻辑位于 [`src/index.js`](./src/index.js)。
